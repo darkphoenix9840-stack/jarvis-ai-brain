@@ -127,10 +127,12 @@ async function handleMobileChatRequest(
       MODEL_ID,
       {
         messages,
-        max_tokens: 512,
+        max_completion_tokens: 2048,
+        reasoning_effort: "low",
         stream: false,
         chat_template_kwargs: {
           enable_thinking: false,
+          clear_thinking: true,
         },
       },
     ) as {
@@ -230,4 +232,4 @@ async function handleBrowserChatRequest(
       error: "Failed to process chat request.",
     }, 500);
   }
-        }
+     }
