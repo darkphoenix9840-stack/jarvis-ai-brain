@@ -1,102 +1,202 @@
+
 /**
- * LLM Chat Application Template
- *
- * A simple chat application using Cloudflare Workers AI.
- * This template demonstrates how to implement an LLM-powered chat interface with
- * streaming responses using Server-Sent Events (SSE).
- *
- * @license MIT
+ * JARVIS AI BRAIN
+ * Cloudflare Workers AI backend
  */
+
 import { Env, ChatMessage } from "./types";
 
-// Model ID for Workers AI model
-// https://developers.cloudflare.com/workers-ai/models/
-const MODEL_ID = "@cf/meta/llama-3.1-8b-instruct-fp8";
+const MODEL_ID = "@cf/zai-org/glm-4.7-flash";
 
-// Default system prompt
 const SYSTEM_PROMPT =
-	"You are a helpful, friendly assistant. Provide concise and accurate responses.";
+  "You are JARVIS, a helpful and intelligent personal AI assistant. " +
+  "Speak naturally and conversationally. Understand follow-up questions " +
+  "using the supplied conversation history. Use friendly Hinglish when " +
+  "the user uses Hinglish. Address the user respectfully. " +
+  "Never claim to have performed a phone action unless the Android app confirms it. " +
+  "Give accurate, clear and useful answers. Keep replies concise unless detail is needed.";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+};
+
+function json(data: unknown, status = 200): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      ...corsHeaders,
+      "Content-Type": "application/json; charset=utf-8",
+    },
+  });
+}
+
+function isChatMessage(value: unknown): value is ChatMessage {
+  if (!value || typeof value !== "object") return false;
+
+  const item = value as {
+    role?: unknown;
+    content?: unknown;
+  };
+
+  return (
+    (item.role === "user" || item.role === "assistant") &&
+    typeof item.content === "string"
+  );
+}
 
 export default {
-	/**
-	 * Main request handler for the Worker
-	 */
-	async fetch(
-		request: Request,
-		env: Env,
-		ctx: ExecutionContext,
-	): Promise<Response> {
-		const url = new URL(request.url);
+  async fetch(
+    request: Request,
+    env: Env,
+    ctx: ExecutionContext,
+  ): Promise<Response> {
+    const url = new URL(request.url);
 
-		// Handle static assets (frontend)
-		if (url.pathname === "/" || !url.pathname.startsWith("/api/")) {
-			return env.ASSETS.fetch(request);
-		}
+    if (request.method === "OPTIONS") {
+      return new Response(null, {
+        status: 204,
+        headers: corsHeaders,
+      });
+    }
 
-		// API Routes
-		if (url.pathname === "/api/chat") {
-			// Handle POST requests for chat
-			if (request.method === "POST") {
-				return handleChatRequest(request, env);
-			}
+    // Existing browser interface
+    if (url.pathname === "/" || !url.pathname.startsWith("/api/")) {
+      return env.ASSETS.fetch(request);
+    }
 
-			// Method not allowed for other request types
-			return new Response("Method not allowed", { status: 405 });
-		}
+    // Android app endpoint
+    if (url.pathname === "/api/mobile-chat") {
+      if (request.method !== "POST") {
+        return json({ error: "Use POST request." }, 405);
+      }
 
-		// Handle 404 for unmatched routes
-		return new Response("Not found", { status: 404 });
-	},
+      return handleMobileChatRequest(request, env);
+    }
+
+    // Existing browser streaming endpoint
+    if (url.pathname === "/api/chat") {
+      if (request.method !== "POST") {
+        return new Response("Method not allowed", { status: 405 });
+      }
+
+      return handleBrowserChatRequest(request, env);
+    }
+
+    return json({ error: "Endpoint not found." }, 404);
+  },
 } satisfies ExportedHandler<Env>;
 
+
 /**
- * Handles chat API requests
+ * Android app: normal JSON response
  */
-async function handleChatRequest(
-	request: Request,
-	env: Env,
+async function handleMobileChatRequest(
+  request: Request,
+  env: Env,
 ): Promise<Response> {
-	try {
-		// Parse JSON request body
-		const { messages = [] } = (await request.json()) as {
-			messages: ChatMessage[];
-		};
+  try {
+    const body = await request.json() as {
+      message?: unknown;
+      history?: unknown;
+    };
 
-		// Add system prompt if not present
-		if (!messages.some((msg) => msg.role === "system")) {
-			messages.unshift({ role: "system", content: SYSTEM_PROMPT });
-		}
+    if (
+      typeof body.message !== "string" ||
+      body.message.trim().length === 0 ||
+      body.message.length > 2000
+    ) {
+      return json({ error: "Message is empty or too long." }, 400);
+    }
 
-		const inputs = {
-			messages,
-			max_tokens: 1024,
-			stream: true,
-		} satisfies AiTextGenerationInput & { stream: true };
+    const history = Array.isArray(body.history)
+      ? body.history
+          .filter(isChatMessage)
+          .slice(-10)
+          .map(item => ({
+            role: item.role,
+            content: item.content.slice(0, 1500),
+          }))
+      : [];
 
-		const stream = await env.AI.run<typeof MODEL_ID>(MODEL_ID, inputs, {
-			// Uncomment to use AI Gateway
-			// gateway: {
-			//   id: "YOUR_GATEWAY_ID", // Replace with your AI Gateway ID
-			//   skipCache: false,      // Set to true to bypass cache
-			//   cacheTtl: 3600,        // Cache time-to-live in seconds
-			// },
-		});
+    const messages: ChatMessage[] = [
+      { role: "system", content: SYSTEM_PROMPT },
+      ...history,
+      { role: "user", content: body.message.trim() },
+    ];
 
-		return new Response(stream, {
-			headers: {
-				"content-type": "text/event-stream; charset=utf-8",
-				"cache-control": "no-cache",
-				connection: "keep-alive",
-			},
-		});
-	} catch (error) {
-		console.error("Error processing chat request:", error);
-		return new Response(
-			JSON.stringify({ error: "Failed to process request" }),
-			{
-				status: 500,
-				headers: { "content-type": "application/json" },
-			},
-		);
-	}
+    const result = await env.AI.run<typeof MODEL_ID>(
+      MODEL_ID,
+      {
+        messages,
+        max_tokens: 512,
+        stream: false,
+      },
+    ) as { response?: string };
+
+    const reply = result.response?.trim();
+
+    if (!reply) {
+      return json({ error: "AI returned an empty response." }, 502);
+    }
+
+    return json({ reply });
+
+  } catch (error) {
+    console.error("Mobile chat error:", error);
+    return json({
+      error: "Could not process your message. Please try again.",
+    }, 502);
+  }
+}
+
+
+/**
+ * Browser: preserve existing streaming chat
+ */
+async function handleBrowserChatRequest(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  try {
+    const body = await request.json() as {
+      messages?: unknown;
+    };
+
+    const history = Array.isArray(body.messages)
+      ? body.messages
+          .filter(isChatMessage)
+          .slice(-20)
+      : [];
+
+    const messages: ChatMessage[] = [
+      { role: "system", content: SYSTEM_PROMPT },
+      ...history,
+    ];
+
+    const stream = await env.AI.run<typeof MODEL_ID>(
+      MODEL_ID,
+      {
+        messages,
+        max_tokens: 1024,
+        stream: true,
+      },
+    );
+
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache",
+        "Access-Control-Allow-Origin": "*",
+      },
+    });
+
+  } catch (error) {
+    console.error("Browser chat error:", error);
+
+    return json({
+      error: "Failed to process chat request.",
+    }, 500);
+  }
 }
