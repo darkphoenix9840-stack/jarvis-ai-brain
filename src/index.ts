@@ -124,31 +124,37 @@ async function handleMobileChatRequest(
       { role: "system", content: SYSTEM_PROMPT },
       ...history,
       { role: "user", content: body.message.trim() },
-    ];
+    ]; 
+const result = await env.AI.run<typeof MODEL_ID>(
+  MODEL_ID,
+  {
+    messages,
+    max_tokens: 512,
+    stream: false,
+  },
+) as {
+  response?: string;
+  choices?: Array<{
+    message?: {
+      content?: string | Array<{ text?: string }>;
+    };
+  }>;
+};
 
-    const result = await env.AI.run<typeof MODEL_ID>(
-      MODEL_ID,
-      {
-        messages,
-        max_tokens: 512,
-        stream: false,
-      },
-    ) as { response?: string };
+const content = result.choices?.[0]?.message?.content;
 
-    const reply = result.response?.trim();
+const reply = (
+  typeof content === "string"
+    ? content
+    : Array.isArray(content)
+      ? content.map(part => part.text ?? "").join("")
+      : result.response ?? ""
+).trim();
 
-    if (!reply) {
-      return json({ error: "AI returned an empty response." }, 502);
-    }
-
-    return json({ reply });
-
-  } catch (error) {
-    console.error("Mobile chat error:", error);
-    return json({
-      error: "Could not process your message. Please try again.",
-    }, 502);
-  }
+if (!reply) {
+  console.error("Unexpected AI response:", JSON.stringify(result));
+  return json({ error: "AI returned an empty response." }, 502);
+}
 }
 
 
