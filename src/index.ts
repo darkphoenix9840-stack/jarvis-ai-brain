@@ -61,12 +61,10 @@ export default {
       });
     }
 
-    // Existing browser interface
     if (url.pathname === "/" || !url.pathname.startsWith("/api/")) {
       return env.ASSETS.fetch(request);
     }
 
-    // Android app endpoint
     if (url.pathname === "/api/mobile-chat") {
       if (request.method !== "POST") {
         return json({ error: "Use POST request." }, 405);
@@ -75,7 +73,6 @@ export default {
       return handleMobileChatRequest(request, env);
     }
 
-    // Existing browser streaming endpoint
     if (url.pathname === "/api/chat") {
       if (request.method !== "POST") {
         return new Response("Method not allowed", { status: 405 });
@@ -132,6 +129,9 @@ async function handleMobileChatRequest(
         messages,
         max_tokens: 512,
         stream: false,
+        chat_template_kwargs: {
+          enable_thinking: false,
+        },
       },
     ) as {
       response?: string;
@@ -142,7 +142,6 @@ async function handleMobileChatRequest(
       }>;
     };
 
-    // DEBUG: inspect actual AI response in Cloudflare logs
     console.log(
       "JARVIS_AI_RESULT:",
       JSON.stringify(result).slice(0, 2000)
@@ -210,6 +209,9 @@ async function handleBrowserChatRequest(
         messages,
         max_tokens: 1024,
         stream: true,
+        chat_template_kwargs: {
+          enable_thinking: false,
+        },
       },
     );
 
