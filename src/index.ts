@@ -124,37 +124,60 @@ async function handleMobileChatRequest(
       { role: "system", content: SYSTEM_PROMPT },
       ...history,
       { role: "user", content: body.message.trim() },
-    ]; 
-const result = await env.AI.run<typeof MODEL_ID>(
-  MODEL_ID,
-  {
-    messages,
-    max_tokens: 512,
-    stream: false,
-  },
-) as {
-  response?: string;
-  choices?: Array<{
-    message?: {
-      content?: string | Array<{ text?: string }>;
+    ];
+
+    const result = await env.AI.run<typeof MODEL_ID>(
+      MODEL_ID,
+      {
+        messages,
+        max_tokens: 512,
+        stream: false,
+      },
+    ) as {
+      response?: string;
+      choices?: Array<{
+        message?: {
+          content?: string | Array<{ text?: string }>;
+        };
+      }>;
     };
-  }>;
-};
 
-const content = result.choices?.[0]?.message?.content;
+    // DEBUG: inspect actual AI response in Cloudflare logs
+    console.log(
+      "JARVIS_AI_RESULT:",
+      JSON.stringify(result).slice(0, 2000)
+    );
 
-const reply = (
-  typeof content === "string"
-    ? content
-    : Array.isArray(content)
-      ? content.map(part => part.text ?? "").join("")
-      : result.response ?? ""
-).trim();
+    const content = result.choices?.[0]?.message?.content;
 
-if (!reply) {
-  console.error("Unexpected AI response:", JSON.stringify(result));
-  return json({ error: "AI returned an empty response." }, 502);
-}
+    const reply = (
+      typeof content === "string"
+        ? content
+        : Array.isArray(content)
+          ? content.map(part => part.text ?? "").join("")
+          : result.response ?? ""
+    ).trim();
+
+    if (!reply) {
+      console.error(
+        "JARVIS_EMPTY_REPLY:",
+        JSON.stringify(result).slice(0, 2000)
+      );
+
+      return json({
+        error: "AI returned an empty response.",
+      }, 502);
+    }
+
+    return json({ reply });
+
+  } catch (error) {
+    console.error("Mobile chat error:", error);
+
+    return json({
+      error: "Could not process your message. Please try again.",
+    }, 502);
+  }
 }
 
 
@@ -194,7 +217,7 @@ async function handleBrowserChatRequest(
       headers: {
         "Content-Type": "text/event-stream; charset=utf-8",
         "Cache-Control": "no-cache",
-        "Access-Control-Allow-Origin": "*",
+        ...corsHeaders,
       },
     });
 
@@ -205,4 +228,4 @@ async function handleBrowserChatRequest(
       error: "Failed to process chat request.",
     }, 500);
   }
-}
+        }
