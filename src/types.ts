@@ -1,3 +1,4 @@
+
 /**
  * Type definitions for the LLM chat application.
  */
@@ -12,6 +13,11 @@ export interface Env {
 	 * Binding for static assets.
 	 */
 	ASSETS: { fetch: (request: Request) => Promise<Response> };
+
+	/**
+	 * Binding for JARVIS D1 memory database.
+	 */
+	DB: D1Database;
 }
 
 /**
