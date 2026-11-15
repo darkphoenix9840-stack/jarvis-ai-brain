@@ -5,7 +5,7 @@
 
 import { Env, ChatMessage } from "./types";
 
-const MODEL_ID = "@cf/zai-org/glm-4.7-flash";
+const MODEL_ID = "@cf/qwen/qwen3.8-27b";
 
 const SYSTEM_PROMPT =
   "You are JARVIS, the user's personal AI assistant. You are JARVIS; the human chatting with you is the user, not JARVIS. " +
