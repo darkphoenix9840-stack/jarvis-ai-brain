@@ -77,6 +77,51 @@ function isChatMessage(value: unknown): value is ChatMessage {
   );
 }
 
+/**
+ * Keep very simple greetings deterministic so the assistant never invents
+ * activities or unrelated personal/medical claims in casual small talk.
+ */
+function getCasualGreetingReply(message: string): string | null {
+  const text = message.trim().toLowerCase();
+
+  // Only handle short, greeting-only messages. Let the model handle real requests.
+  if (text.length > 120) return null;
+
+  const hasHowAreYou =
+    /\bhow are you\b|\bkaise ho\b|\bkaisi ho\b|\bkaise hain\b|\bkaisi hain\b/.test(text) ||
+    /कैसे हो|कैसी हो|कैसे हैं|कैसी हैं/.test(text);
+
+  const hasWhatDoing =
+    /\bwhat are you doing\b|\bkya kar rahe ho\b|\bkya kar rahi ho\b|\baaj kya kar rahe ho\b/.test(text) ||
+    /क्या कर रहे हो|क्या कर रही हो|आज क्या कर रहे हो/.test(text);
+
+  if (!hasHowAreYou && !hasWhatDoing) return null;
+
+  const isFormal = /\baap\b|\baapka\b|\baapki\b|\baapke\b|आप|आपका|आपकी|आपके/.test(text);
+  const isDevanagari = /[\u0900-\u097F]/.test(text);
+
+  if (isDevanagari) {
+    if (hasHowAreYou && hasWhatDoing) {
+      return isFormal
+        ? "मैं ठीक हूँ। अभी आपकी मदद के लिए यहाँ हूँ। बताइए, आज क्या करना है?"
+        : "मैं ठीक हूँ। अभी तुम्हारी मदद के लिए यहाँ हूँ। बताओ, आज क्या करना है?";
+    }
+    return isFormal
+      ? "मैं ठीक हूँ, धन्यवाद! आप बताइए, कैसे हैं?"
+      : "मैं ठीक हूँ! तुम बताओ, कैसे हो?";
+  }
+
+  if (hasHowAreYou && hasWhatDoing) {
+    return isFormal
+      ? "Main theek hoon! Abhi aapki help ke liye yahin hoon. Aap bataiye, aaj kya plan hai?"
+      : "Main theek hoon, bhai! Abhi tumse baat kar raha hoon. Tum batao, aaj kya plan hai?";
+  }
+
+  return isFormal
+    ? "Main theek hoon, shukriya! Aap bataiye, kaise hain?"
+    : "Main theek hoon, bhai! Tum batao, kaise ho?";
+}
+
 export default {
   async fetch(
     request: Request,
@@ -136,6 +181,11 @@ async function handleMobileChatRequest(
       body.message.length > 2000
     ) {
       return json({ error: "Message is empty or too long." }, 400);
+    }
+
+    const greetingReply = getCasualGreetingReply(body.message);
+    if (greetingReply) {
+      return json({ reply: greetingReply });
     }
 
     const history = Array.isArray(body.history)
