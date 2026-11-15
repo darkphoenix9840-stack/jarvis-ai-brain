@@ -112,7 +112,6 @@ function getCasualGreetingReply(message: string): string | null {
 
   if (!hasHowAreYou && !hasWhatDoing) return null;
 
-  const isFormal = /\baap\b|\baapka\b|\baapki\b|\baapke\b|आप|आपका|आपकी|आपके/.test(text);
   const isDevanagari = /[\u0900-\u097F]/.test(text);
 
   if (isDevanagari) {
