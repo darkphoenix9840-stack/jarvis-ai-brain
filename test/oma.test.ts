@@ -238,6 +238,32 @@ describe("OMA endpoint", () => {
     expect(response.status).toBe(502);
   });
 
+  it("rejects duplicate IDs in model tool calls", async () => {
+    const run = vi.fn().mockResolvedValue({
+      choices: [{ message: { tool_calls: [
+        { id: "call_duplicate", type: "function", function: { name: "wonk_search", arguments: '{"query":"first"}' } },
+        { id: "call_duplicate", type: "function", function: { name: "wonk_search", arguments: '{"query":"second"}' } },
+      ] } }],
+    });
+    const response = await handleOmaChatRequest(request({ ...validBody, tools: [wonkTool] }), {
+      JARVIS_OMA_TOKEN: token, AI: { run },
+    } as never);
+    expect(response.status).toBe(502);
+  });
+
+  it("rejects tool calls when the request explicitly disables them", async () => {
+    const run = vi.fn().mockResolvedValue({
+      choices: [{ message: { tool_calls: [{
+        id: "call_forbidden", type: "function",
+        function: { name: "wonk_search", arguments: '{"query":"not allowed"}' },
+      }] } }],
+    });
+    const response = await handleOmaChatRequest(request({
+      ...validBody, tools: [wonkTool], tool_choice: "none",
+    }), { JARVIS_OMA_TOKEN: token, AI: { run } } as never);
+    expect(response.status).toBe(502);
+  });
+
   it("returns estimated usage when provider usage is absent", async () => {
     const run = vi.fn().mockResolvedValue({ response: "Estimated usage." });
     const response = await handleOmaChatRequest(request(validBody), { JARVIS_OMA_TOKEN: token, AI: { run } } as never);
