@@ -22,7 +22,7 @@ Headers: `Authorization: Bearer <JARVIS_OMA_TOKEN>` and `Content-Type: applicati
 
 ### Tool-enabled request
 
-The local OMA client may provide a small allowlist of tools. The Worker forwards only their JSON schemas to Workers AI and returns any model-selected calls to the local client.
+The local OMA client may provide a small allowlist of tools. The Worker maps the OMA `input_schema` into Cloudflare Workers AI's native `{ name, description, parameters }` tool format and returns any model-selected calls to the local client. It normalizes both Workers AI's native `{ name, arguments }` call records and OpenAI-compatible `{ function: { name, arguments } }` records.
 
 ```json
 {
