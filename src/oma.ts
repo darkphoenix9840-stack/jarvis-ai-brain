@@ -66,7 +66,7 @@ function textFromToolResult(value: unknown): string | null {
     if (!isRecord(part) || part.type !== "text" || typeof part.text !== "string") return null;
     parts.push(part.text);
   }
-  return parts.join("\\n");
+  return parts.join("\n");
 }
 
 function validateMessage(value: unknown): OmaMessage | null {
@@ -201,7 +201,7 @@ function toModelMessages(messages: OmaMessage[]): ModelMessage[] {
       const text = message.content
         .filter((block): block is TextBlock => block.type === "text")
         .map(block => block.text)
-        .join("\\n");
+        .join("\n");
       const calls = message.content
         .filter((block): block is ToolUseBlock => block.type === "tool_use")
         .map(block => ({
@@ -219,7 +219,7 @@ function toModelMessages(messages: OmaMessage[]): ModelMessage[] {
     const text = message.content
       .filter((block): block is TextBlock => block.type === "text")
       .map(block => block.text)
-      .join("\\n");
+      .join("\n");
     if (text) output.push({ role: "user", content: text });
     for (const block of message.content) {
       if (block.type !== "tool_result") continue;
@@ -347,7 +347,7 @@ export async function handleOmaChatRequest(request: Request, env: Env): Promise<
     const content: Array<TextBlock | ToolUseBlock> = [];
     if (text) content.push({ type: "text", text: boundedText(text, 12_000) });
     content.push(...toolUses);
-    const promptTokens = result.usage?.prompt_tokens ?? estimateTokens(payload.messages.map(item => typeof item.content === "string" ? item.content : JSON.stringify(item.content)).join("\\n"));
+    const promptTokens = result.usage?.prompt_tokens ?? estimateTokens(payload.messages.map(item => typeof item.content === "string" ? item.content : JSON.stringify(item.content)).join("\n"));
     const completionTokens = result.usage?.completion_tokens ?? estimateTokens(JSON.stringify(content));
     const response = {
       id: crypto.randomUUID(),
