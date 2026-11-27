@@ -70,8 +70,11 @@ describe("OMA endpoint", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
-  it("returns bounded model output for an authorized request", async () => {
-    const run = vi.fn().mockResolvedValue({ response: "Reviewed safely." });
+  it("returns the exact response contract required by the local OMA adapter", async () => {
+    const run = vi.fn().mockResolvedValue({
+      response: "Reviewed safely.",
+      usage: { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16 },
+    });
     const request = new Request("https://example.workers.dev/api/oma/chat", {
       method: "POST",
       headers: {
@@ -82,10 +85,33 @@ describe("OMA endpoint", () => {
     });
     const response = await handleOmaChatRequest(request, { JARVIS_OMA_TOKEN: token, AI: { run } } as never);
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
-      content: "Reviewed safely.",
-      usage: { estimated: true },
-    });
+    const data = await response.json() as {
+      id: string;
+      model: string;
+      content: Array<{ type: string; text: string }>;
+      usage: { input_tokens: number; output_tokens: number };
+    };
+    expect(data.id).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(data.model).toBe("@cf/qwen/qwen3.8-27b");
+    expect(data.content).toEqual([{ type: "text", text: "Reviewed safely." }]);
+    expect(data.usage).toEqual({ input_tokens: 12, output_tokens: 4 });
     expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns estimated usage in the adapter's required field names when provider usage is absent", async () => {
+    const run = vi.fn().mockResolvedValue({ response: "Estimated usage." });
+    const request = new Request("https://example.workers.dev/api/oma/chat", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer " + token,
+      },
+      body: JSON.stringify(validBody),
+    });
+    const response = await handleOmaChatRequest(request, { JARVIS_OMA_TOKEN: token, AI: { run } } as never);
+    expect(response.status).toBe(200);
+    const data = await response.json() as { usage: { input_tokens: number; output_tokens: number } };
+    expect(data.usage.input_tokens).toBeGreaterThan(0);
+    expect(data.usage.output_tokens).toBeGreaterThan(0);
   });
 });
