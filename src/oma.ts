@@ -153,6 +153,7 @@ export function validateOmaPayload(value: unknown): OmaPayload | null {
   if (!tools) return null;
   const allowedToolNames = new Set(tools.map(tool => tool.name));
   const pendingToolCalls = new Set<string>();
+  const seenToolCallIds = new Set<string>();
   const messages: OmaMessage[] = [];
   let totalChars = 0;
   let hasUserMessage = false;
@@ -162,7 +163,8 @@ export function validateOmaPayload(value: unknown): OmaPayload | null {
     if (Array.isArray(message.content)) {
       for (const block of message.content) {
         if (block.type === "tool_use") {
-          if (!allowedToolNames.has(block.name) || pendingToolCalls.has(block.id)) return null;
+          if (!allowedToolNames.has(block.name) || seenToolCallIds.has(block.id)) return null;
+          seenToolCallIds.add(block.id);
           pendingToolCalls.add(block.id);
         } else if (block.type === "tool_result") {
           if (!pendingToolCalls.has(block.tool_use_id)) return null;
@@ -176,7 +178,7 @@ export function validateOmaPayload(value: unknown): OmaPayload | null {
     if (message.role === "user") hasUserMessage = true;
     messages.push(message);
   }
-  if (!hasUserMessage) return null;
+  if (!hasUserMessage || pendingToolCalls.size > 0) return null;
 
   const maxTokens = value.maxTokens === undefined ? DEFAULT_MAX_TOKENS : value.maxTokens;
   if (typeof maxTokens !== "number" || !Number.isInteger(maxTokens) || maxTokens < 64 || maxTokens > 1_400) return null;
