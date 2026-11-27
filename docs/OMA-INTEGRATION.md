@@ -25,7 +25,25 @@ Request:
 }
 ```
 
-Response contains `content` and `usage` (`prompt_tokens`, `completion_tokens`, `total_tokens`, `estimated`). Token counts are estimates when Workers AI does not return usage.
+Successful responses follow the local OMA adapter contract:
+```json
+{
+  "id": "generated-request-uuid",
+  "model": "@cf/qwen/qwen3.8-27b",
+  "content": [
+    {
+      "type": "text",
+      "text": "Reviewed safely."
+    }
+  ],
+  "usage": {
+    "input_tokens": 12,
+    "output_tokens": 4
+  }
+}
+```
+
+The response body is bounded to 16,000 bytes. Token counts are estimates when Workers AI does not return usage; the adapter-compatible response uses `input_tokens` and `output_tokens`.
 
 ## Configuration
 
