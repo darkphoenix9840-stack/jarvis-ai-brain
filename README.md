@@ -151,3 +151,10 @@ The UI styling is contained in the `<style>` section of `public/index.html`. You
 - [Cloudflare Workers Documentation](https://developers.cloudflare.com/workers/)
 - [Cloudflare Workers AI Documentation](https://developers.cloudflare.com/workers-ai/)
 - [Workers AI Models](https://developers.cloudflare.com/workers-ai/models/)
+
+
+## OMA five-agent integration
+
+A separate authenticated `POST /api/oma/chat` endpoint is available for the external Open Multi-Agent client. It uses the existing Workers AI binding and does not alter mobile chat, browser chat, or D1 memory. Configure the Cloudflare secret `JARVIS_OMA_TOKEN` (minimum 24 characters) and use the same value as a local bearer token in the OMA client. Keep both values private; never commit `.dev.vars`. See [docs/OMA-INTEGRATION.md](docs/OMA-INTEGRATION.md) for request limits and safety boundaries.
+
+The endpoint is text-only and does not grant agents access to D1 memory, shell commands, files, GitHub writes, patch application, or deployment. This PR does not deploy the Worker or create secrets.
