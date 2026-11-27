@@ -73,8 +73,8 @@ The local client executes the selected tool and sends its result back as a user 
 - Bearer token must be configured and at least 24 characters.
 - At most 20 messages, 10,000 characters per message, 16,000 total message characters, 20,000 request bytes, and 64–1,400 completion tokens.
 - At most 8 uniquely named tools, each with an object JSON schema no larger than 8 KiB; at most 4 model tool calls per response.
-- Tool names and call IDs are restricted to safe identifier characters. Tool calls must match a name in the request allowlist and contain a JSON object as arguments.
-- `tool_choice` accepts only `auto` or `none`; no forced tool invocation.
+- Tool names and call IDs are restricted to safe identifier characters. Tool calls must match a name in the request allowlist and contain a JSON object as arguments. Historical tool-use IDs must be unique, each result must match one pending call, and no call may remain unresolved at the end of the submitted history. Duplicate IDs in model responses are rejected.
+- `tool_choice` accepts only `auto` or `none`; no forced tool invocation. If the model returns a tool call when the request specified `none`, the response is rejected.
 - Response body is bounded to 16,000 bytes. Token counts are estimated when Workers AI does not return usage.
 
 ## Configuration
