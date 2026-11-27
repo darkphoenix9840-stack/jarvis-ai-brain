@@ -5,6 +5,7 @@ const MAX_MESSAGES = 20;
 const MAX_MESSAGE_CHARS = 10_000;
 const MAX_TOTAL_CHARS = 16_000;
 const DEFAULT_MAX_TOKENS = 700;
+const MAX_RESPONSE_BYTES = 16_000;
 const MODEL_ID = "@cf/qwen/qwen3.8-27b";
 
 type OmaMessage = { role: "system" | "user" | "assistant"; content: string };
@@ -34,7 +35,7 @@ function constantTimeEqual(left: string, right: string): boolean {
 
 export function isOmaAuthorized(request: Request, configuredToken?: string): boolean {
   if (!configuredToken || configuredToken.length < 24) return false;
-  const match = /^Bearer ([^\s]+)$/i.exec(request.headers.get("Authorization") ?? "");
+  const match = /^Bearer ([^\\s]+)$/i.exec(request.headers.get("Authorization") ?? "");
   return Boolean(match && constantTimeEqual(match[1], configuredToken));
 }
 
@@ -65,6 +66,19 @@ export function validateOmaPayload(value: unknown): OmaPayload | null {
 
 function estimateTokens(value: string): number {
   return Math.max(1, Math.ceil(value.length / 4));
+}
+
+function boundedText(value: string, maxBytes: number): string {
+  const encoder = new TextEncoder();
+  if (encoder.encode(value).byteLength <= maxBytes) return value;
+  let low = 0;
+  let high = value.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (encoder.encode(value.slice(0, middle)).byteLength <= maxBytes) low = middle;
+    else high = middle - 1;
+  }
+  return value.slice(0, low);
 }
 
 /** Text-only OMA adapter. It intentionally has no access to D1 memory or tools. */
@@ -131,16 +145,22 @@ export async function handleOmaChatRequest(request: Request, env: Env): Promise<
       return json({ error: "AI returned an empty response." }, 502);
     }
 
-    const promptTokens = result.usage?.prompt_tokens ?? estimateTokens(payload.messages.map(message => message.content).join("\n"));
+    const promptTokens = result.usage?.prompt_tokens ?? estimateTokens(payload.messages.map(message => message.content).join("\\n"));
     const completionTokens = result.usage?.completion_tokens ?? estimateTokens(content);
-    const usage = {
-      prompt_tokens: promptTokens,
-      completion_tokens: completionTokens,
-      total_tokens: result.usage?.total_tokens ?? promptTokens + completionTokens,
-      estimated: !result.usage,
+    const response = {
+      id: crypto.randomUUID(),
+      model: MODEL_ID,
+      content: [{ type: "text", text: boundedText(content, 12_000) }],
+      usage: {
+        input_tokens: promptTokens,
+        output_tokens: completionTokens,
+      },
     };
+    if (new TextEncoder().encode(JSON.stringify(response)).byteLength > MAX_RESPONSE_BYTES) {
+      return json({ error: "AI response is too large." }, 502);
+    }
     console.log("JARVIS_OMA_LATENCY_MS:", Date.now() - startedAt);
-    return json({ content, usage });
+    return json(response);
   } catch (error) {
     console.error("JARVIS_OMA_MODEL_ERROR:", error);
     return json({ error: "OMA model request failed." }, 502);
