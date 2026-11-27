@@ -4,6 +4,7 @@
  */
 
 import { Env, ChatMessage } from "./types";
+import { handleOmaChatRequest } from "./oma";
 
 const MODEL_ID = "@cf/qwen/qwen3.8-27b";
 
@@ -56,7 +57,7 @@ const SYSTEM_PROMPT =
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization",
 };
 
 function json(data: unknown, status = 200): Response {
@@ -216,6 +217,10 @@ export default {
         status: 204,
         headers: corsHeaders,
       });
+    }
+
+    if (url.pathname === "/api/oma/chat") {
+      return handleOmaChatRequest(request, env);
     }
 
     if (url.pathname === "/" || !url.pathname.startsWith("/api/")) {
