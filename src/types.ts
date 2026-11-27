@@ -4,6 +4,8 @@
  */
 
 export interface Env {
+	/** Secret used only by the authenticated OMA adapter endpoint. */
+	JARVIS_OMA_TOKEN?: string;
 	/**
 	 * Binding for the Workers AI API.
 	 */
