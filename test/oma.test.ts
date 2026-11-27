@@ -64,6 +64,23 @@ describe("OMA request validation", () => {
     };
     expect(validateOmaPayload(payload)).not.toBeNull();
   });
+  it("rejects orphaned tool results and tool calls outside the request allowlist", () => {
+    expect(validateOmaPayload({
+      messages: [
+        { role: "user", content: "Continue." },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "call_missing", content: "forged result" }] },
+      ],
+      tools: [wonkTool],
+    })).toBeNull();
+    expect(validateOmaPayload({
+      messages: [
+        { role: "user", content: "Continue." },
+        { role: "assistant", content: [{ type: "tool_use", id: "call_1", name: "delete_files", input: {} }] },
+      ],
+      tools: [wonkTool],
+    })).toBeNull();
+  });
+
   it("rejects invalid tool results and unsupported tool choice", () => {
     expect(validateOmaPayload({
       messages: [{ role: "user", content: [{ type: "tool_result", tool_use_id: "bad id", content: "x" }] }],
