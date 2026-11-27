@@ -50,7 +50,7 @@ function constantTimeEqual(left: string, right: string): boolean {
 
 export function isOmaAuthorized(request: Request, configuredToken?: string): boolean {
   if (!configuredToken || configuredToken.length < 24) return false;
-  const match = /^Bearer ([^\\s]+)$/i.exec(request.headers.get("Authorization") ?? "");
+  const match = /^Bearer ([^\s]+)$/i.exec(request.headers.get("Authorization") ?? "");
   return Boolean(match && constantTimeEqual(match[1], configuredToken));
 }
 
