@@ -146,10 +146,31 @@ describe("OMA endpoint", () => {
       type: "tool_use", id: "call_wonk_1", name: "wonk_search", input: { query: "Agent adapter" },
     }]);
     expect(data.stop_reason).toBe("tool_use");
-    const modelInput = run.mock.calls[0][1] as { tools: Array<{ function: { name: string; parameters: unknown } }>; parallel_tool_calls: boolean };
+    const modelInput = run.mock.calls[0][1] as { tools: Array<{ name: string; parameters: unknown }>; parallel_tool_calls: boolean };
     expect(modelInput.tools).toHaveLength(1);
-    expect(modelInput.tools[0].function.name).toBe("wonk_search");
+    expect(modelInput.tools[0].name).toBe("wonk_search");
     expect(modelInput.parallel_tool_calls).toBe(false);
+  });
+
+
+  it("normalizes the native Workers AI tool_calls response shape", async () => {
+    const run = vi.fn().mockResolvedValue({
+      tool_calls: [{ name: "wonk_search", arguments: { query: "README" } }],
+    });
+    const response = await handleOmaChatRequest(request({ ...validBody, tools: [wonkTool] }), {
+      JARVIS_OMA_TOKEN: token, AI: { run },
+    } as never);
+    expect(response.status).toBe(200);
+    const data = await response.json() as {
+      content: Array<{ type: string; id?: string; name?: string; input?: Record<string, unknown> }>;
+      stop_reason: string;
+    };
+    expect(data.content).toHaveLength(1);
+    expect(data.content[0]).toMatchObject({
+      type: "tool_use", name: "wonk_search", input: { query: "README" },
+    });
+    expect(data.content[0].id).toMatch(/^call_[a-f0-9-]+$/i);
+    expect(data.stop_reason).toBe("tool_use");
   });
 
   it("converts prior tool results back into model tool messages", async () => {
@@ -165,7 +186,7 @@ describe("OMA endpoint", () => {
     const response = await handleOmaChatRequest(request(body), { JARVIS_OMA_TOKEN: token, AI: { run } } as never);
     expect(response.status).toBe(200);
     const modelInput = run.mock.calls[0][1] as { messages: Array<{ role: string; tool_call_id?: string; content: string | null }> };
-    expect(modelInput.messages.at(-1)).toMatchObject({
+    expect(modelInput.messages[modelInput.messages.length - 1]).toMatchObject({
       role: "tool", tool_call_id: "call_1", content: "Found two references.",
     });
   });
