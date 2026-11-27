@@ -149,12 +149,27 @@ export function validateOmaPayload(value: unknown): OmaPayload | null {
   if (!isRecord(value) || !Array.isArray(value.messages) ||
     value.messages.length < 1 || value.messages.length > MAX_MESSAGES) return null;
 
+  const tools = validateTools(value.tools);
+  if (!tools) return null;
+  const allowedToolNames = new Set(tools.map(tool => tool.name));
+  const pendingToolCalls = new Set<string>();
   const messages: OmaMessage[] = [];
   let totalChars = 0;
   let hasUserMessage = false;
   for (const item of value.messages) {
     const message = validateMessage(item);
     if (!message) return null;
+    if (Array.isArray(message.content)) {
+      for (const block of message.content) {
+        if (block.type === "tool_use") {
+          if (!allowedToolNames.has(block.name) || pendingToolCalls.has(block.id)) return null;
+          pendingToolCalls.add(block.id);
+        } else if (block.type === "tool_result") {
+          if (!pendingToolCalls.has(block.tool_use_id)) return null;
+          pendingToolCalls.delete(block.tool_use_id);
+        }
+      }
+    }
     const size = typeof message.content === "string" ? message.content.length : JSON.stringify(message.content).length;
     totalChars += size;
     if (totalChars > MAX_TOTAL_CHARS) return null;
@@ -165,8 +180,6 @@ export function validateOmaPayload(value: unknown): OmaPayload | null {
 
   const maxTokens = value.maxTokens === undefined ? DEFAULT_MAX_TOKENS : value.maxTokens;
   if (typeof maxTokens !== "number" || !Number.isInteger(maxTokens) || maxTokens < 64 || maxTokens > 1_400) return null;
-  const tools = validateTools(value.tools);
-  if (!tools) return null;
   const toolChoice = value.tool_choice === undefined ? "auto" : value.tool_choice;
   if (toolChoice !== "auto" && toolChoice !== "none") return null;
   if (toolChoice === "auto" && tools.length === 0 && value.tool_choice !== undefined) return null;
