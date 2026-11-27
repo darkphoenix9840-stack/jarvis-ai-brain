@@ -64,7 +64,7 @@ describe("OMA request validation", () => {
     };
     expect(validateOmaPayload(payload)).not.toBeNull();
   });
-  it("rejects orphaned tool results and tool calls outside the request allowlist", () => {
+  it("rejects orphaned results, disallowed calls, incomplete calls, and reused call IDs", () => {
     expect(validateOmaPayload({
       messages: [
         { role: "user", content: "Continue." },
@@ -76,6 +76,23 @@ describe("OMA request validation", () => {
       messages: [
         { role: "user", content: "Continue." },
         { role: "assistant", content: [{ type: "tool_use", id: "call_1", name: "delete_files", input: {} }] },
+      ],
+      tools: [wonkTool],
+    })).toBeNull();
+    expect(validateOmaPayload({
+      messages: [
+        { role: "user", content: "Continue." },
+        { role: "assistant", content: [{ type: "tool_use", id: "call_pending", name: "wonk_search", input: { query: "x" } }] },
+      ],
+      tools: [wonkTool],
+    })).toBeNull();
+    expect(validateOmaPayload({
+      messages: [
+        { role: "user", content: "Continue." },
+        { role: "assistant", content: [{ type: "tool_use", id: "call_repeat", name: "wonk_search", input: { query: "x" } }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "call_repeat", content: "done" }] },
+        { role: "assistant", content: [{ type: "tool_use", id: "call_repeat", name: "wonk_search", input: { query: "y" } }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "call_repeat", content: "done again" }] },
       ],
       tools: [wonkTool],
     })).toBeNull();
