@@ -238,16 +238,23 @@ function parseToolCalls(value: unknown, allowedNames: Set<string>): ToolUseBlock
   if (!Array.isArray(value) || value.length > MAX_TOOL_CALLS) return null;
   const output: ToolUseBlock[] = [];
   for (const item of value) {
-    if (!isRecord(item) || typeof item.id !== "string" ||
-      !/^[a-zA-Z0-9_-]{1,128}$/.test(item.id) || !isRecord(item.function)) return null;
-    const name = item.function.name;
-    const rawArgs = item.function.arguments;
-    if (typeof name !== "string" || !allowedNames.has(name) || typeof rawArgs !== "string" ||
-      rawArgs.length > MAX_TOOL_SCHEMA_BYTES) return null;
-    let input: unknown;
-    try { input = JSON.parse(rawArgs); } catch { return null; }
+    if (!isRecord(item)) return null;
+    const fn = isRecord(item.function) ? item.function : item;
+    const name = fn.name;
+    const rawArgs = fn.arguments;
+    if (typeof name !== "string" || !allowedNames.has(name)) return null;
+    let input: unknown = rawArgs;
+    if (typeof rawArgs === "string") {
+      if (rawArgs.length > MAX_TOOL_SCHEMA_BYTES) return null;
+      try { input = JSON.parse(rawArgs); } catch { return null; }
+    } else if (!isRecord(rawArgs) || JSON.stringify(rawArgs).length > MAX_TOOL_SCHEMA_BYTES) {
+      return null;
+    }
     if (!isRecord(input)) return null;
-    output.push({ type: "tool_use", id: item.id, name, input });
+    const id = typeof item.id === "string" && /^[a-zA-Z0-9_-]{1,128}$/.test(item.id)
+      ? item.id
+      : "call_" + crypto.randomUUID();
+    output.push({ type: "tool_use", id, name, input });
   }
   return output;
 }
@@ -297,12 +304,9 @@ export async function handleOmaChatRequest(request: Request, env: Env): Promise<
   try {
     const startedAt = Date.now();
     const modelTools = payload.tools.map(tool => ({
-      type: "function",
-      function: {
-        name: tool.name,
-        description: tool.description,
-        parameters: tool.input_schema,
-      },
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.input_schema,
     }));
     const result = await env.AI.run<typeof MODEL_ID>(MODEL_ID, {
       messages: toModelMessages(payload.messages),
@@ -323,13 +327,14 @@ export async function handleOmaChatRequest(request: Request, env: Env): Promise<
           tool_calls?: unknown;
         };
       }>;
+      tool_calls?: unknown;
       usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
     };
 
     const message = result.choices?.[0]?.message;
     const value = message?.content;
     const text = (typeof value === "string" ? value : Array.isArray(value) ? value.map(part => part.text ?? "").join("") : result.response ?? "").trim();
-    const toolUses = parseToolCalls(message?.tool_calls, new Set(payload.tools.map(tool => tool.name)));
+    const toolUses = parseToolCalls(message?.tool_calls ?? result.tool_calls, new Set(payload.tools.map(tool => tool.name)));
     if (!toolUses) {
       console.error("JARVIS_OMA_INVALID_TOOL_CALL");
       return json({ error: "AI returned an invalid or unsupported tool call." }, 502);
