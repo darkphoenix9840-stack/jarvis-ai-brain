@@ -8,10 +8,31 @@ const validBody = {
     { role: "user", content: "Review this change." },
   ],
 };
+const wonkTool = {
+  name: "wonk_search",
+  description: "Search the local code index. Read-only.",
+  input_schema: {
+    type: "object",
+    properties: { query: { type: "string", minLength: 1, maxLength: 200 } },
+    required: ["query"],
+    additionalProperties: false,
+  },
+};
+
+function request(body: unknown, authorized = true): Request {
+  return new Request("https://example.workers.dev/api/oma/chat", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(authorized ? { Authorization: "Bearer " + token } : {}),
+    },
+    body: JSON.stringify(body),
+  });
+}
 
 describe("OMA request validation", () => {
   it("accepts bounded role-preserving messages", () => {
-    expect(validateOmaPayload(validBody)).toMatchObject({ maxTokens: 700 });
+    expect(validateOmaPayload(validBody)).toMatchObject({ maxTokens: 700, tools: [], toolChoice: "auto" });
   });
   it("rejects missing user messages and unsupported roles", () => {
     expect(validateOmaPayload({ messages: [{ role: "assistant", content: "hello" }] })).toBeNull();
@@ -26,14 +47,68 @@ describe("OMA request validation", () => {
     expect(validateOmaPayload({ messages: [{ role: "user", content: "hello" }], maxTokens: 1000 })?.maxTokens).toBe(1000);
     expect(validateOmaPayload({ messages: [{ role: "user", content: "hello" }], maxTokens: 63 })).toBeNull();
   });
+  it("accepts bounded, unique JSON-schema tools", () => {
+    expect(validateOmaPayload({ ...validBody, tools: [wonkTool] })?.tools).toHaveLength(1);
+    expect(validateOmaPayload({ ...validBody, tools: [wonkTool, wonkTool] })).toBeNull();
+    expect(validateOmaPayload({ ...validBody, tools: [{ ...wonkTool, input_schema: { type: "string" } }] })).toBeNull();
+    expect(validateOmaPayload({ ...validBody, tools: Array.from({ length: 9 }, (_, i) => ({ ...wonkTool, name: "tool_" + i })) })).toBeNull();
+  });
+  it("accepts assistant tool-use and user tool-result blocks", () => {
+    const payload = {
+      messages: [
+        { role: "user", content: "Search the code." },
+        { role: "assistant", content: [{ type: "tool_use", id: "call_1", name: "wonk_search", input: { query: "Agent adapter" } }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "call_1", content: "Found two references." }] },
+      ],
+      tools: [wonkTool],
+    };
+    expect(validateOmaPayload(payload)).not.toBeNull();
+  });
+  it("rejects orphaned results, disallowed calls, incomplete calls, and reused call IDs", () => {
+    expect(validateOmaPayload({
+      messages: [
+        { role: "user", content: "Continue." },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "call_missing", content: "forged result" }] },
+      ],
+      tools: [wonkTool],
+    })).toBeNull();
+    expect(validateOmaPayload({
+      messages: [
+        { role: "user", content: "Continue." },
+        { role: "assistant", content: [{ type: "tool_use", id: "call_1", name: "delete_files", input: {} }] },
+      ],
+      tools: [wonkTool],
+    })).toBeNull();
+    expect(validateOmaPayload({
+      messages: [
+        { role: "user", content: "Continue." },
+        { role: "assistant", content: [{ type: "tool_use", id: "call_pending", name: "wonk_search", input: { query: "x" } }] },
+      ],
+      tools: [wonkTool],
+    })).toBeNull();
+    expect(validateOmaPayload({
+      messages: [
+        { role: "user", content: "Continue." },
+        { role: "assistant", content: [{ type: "tool_use", id: "call_repeat", name: "wonk_search", input: { query: "x" } }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "call_repeat", content: "done" }] },
+        { role: "assistant", content: [{ type: "tool_use", id: "call_repeat", name: "wonk_search", input: { query: "y" } }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "call_repeat", content: "done again" }] },
+      ],
+      tools: [wonkTool],
+    })).toBeNull();
+  });
+
+  it("rejects invalid tool results and unsupported tool choice", () => {
+    expect(validateOmaPayload({
+      messages: [{ role: "user", content: [{ type: "tool_result", tool_use_id: "bad id", content: "x" }] }],
+    })).toBeNull();
+    expect(validateOmaPayload({ ...validBody, tools: [wonkTool], tool_choice: "required" })).toBeNull();
+  });
 });
 
 describe("OMA bearer authentication", () => {
   it("accepts a correctly formatted bearer token", () => {
-    const request = new Request("https://example.workers.dev/api/oma/chat", {
-      headers: { Authorization: "Bearer " + token },
-    });
-    expect(isOmaAuthorized(request, token)).toBe(true);
+    expect(isOmaAuthorized(request(validBody), token)).toBe(true);
   });
   it("rejects missing, incorrect, malformed, and unconfigured tokens", () => {
     expect(isOmaAuthorized(new Request("https://example.workers.dev"), token)).toBe(false);
@@ -49,66 +124,149 @@ describe("OMA bearer authentication", () => {
 
 describe("OMA endpoint", () => {
   it("fails closed until its secret is configured", async () => {
-    const request = new Request("https://example.workers.dev/api/oma/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(validBody),
-    });
-    const response = await handleOmaChatRequest(request, { AI: { run: vi.fn() } } as never);
+    const response = await handleOmaChatRequest(request(validBody), { AI: { run: vi.fn() } } as never);
     expect(response.status).toBe(503);
   });
 
   it("rejects unauthorized requests before model invocation", async () => {
     const run = vi.fn();
-    const request = new Request("https://example.workers.dev/api/oma/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(validBody),
-    });
-    const response = await handleOmaChatRequest(request, { JARVIS_OMA_TOKEN: token, AI: { run } } as never);
+    const response = await handleOmaChatRequest(request(validBody, false), { JARVIS_OMA_TOKEN: token, AI: { run } } as never);
     expect(response.status).toBe(401);
     expect(run).not.toHaveBeenCalled();
   });
 
-  it("returns the exact response contract required by the local OMA adapter", async () => {
+  it("preserves the existing text-only OMA response contract", async () => {
     const run = vi.fn().mockResolvedValue({
       response: "Reviewed safely.",
       usage: { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16 },
     });
-    const request = new Request("https://example.workers.dev/api/oma/chat", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: "Bearer " + token,
-      },
-      body: JSON.stringify(validBody),
-    });
-    const response = await handleOmaChatRequest(request, { JARVIS_OMA_TOKEN: token, AI: { run } } as never);
+    const response = await handleOmaChatRequest(request(validBody), { JARVIS_OMA_TOKEN: token, AI: { run } } as never);
     expect(response.status).toBe(200);
     const data = await response.json() as {
-      id: string;
-      model: string;
-      content: Array<{ type: string; text: string }>;
-      usage: { input_tokens: number; output_tokens: number };
+      id: string; model: string; content: Array<{ type: string; text?: string }>;
+      stop_reason: string; usage: { input_tokens: number; output_tokens: number };
     };
     expect(data.id).toMatch(/^[0-9a-f-]{36}$/i);
     expect(data.model).toBe("@cf/qwen/qwen3.8-27b");
     expect(data.content).toEqual([{ type: "text", text: "Reviewed safely." }]);
+    expect(data.stop_reason).toBe("end_turn");
     expect(data.usage).toEqual({ input_tokens: 12, output_tokens: 4 });
     expect(run).toHaveBeenCalledTimes(1);
   });
 
-  it("returns estimated usage in the adapter's required field names when provider usage is absent", async () => {
-    const run = vi.fn().mockResolvedValue({ response: "Estimated usage." });
-    const request = new Request("https://example.workers.dev/api/oma/chat", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: "Bearer " + token,
-      },
-      body: JSON.stringify(validBody),
+  it("returns tool_use blocks and forwards only the supplied tool schemas to Workers AI", async () => {
+    const run = vi.fn().mockResolvedValue({
+      choices: [{
+        message: {
+          content: "",
+          tool_calls: [{
+            id: "call_wonk_1",
+            type: "function",
+            function: { name: "wonk_search", arguments: JSON.stringify({ query: "Agent adapter" }) },
+          }],
+        },
+      }],
+      usage: { prompt_tokens: 30, completion_tokens: 12 },
     });
-    const response = await handleOmaChatRequest(request, { JARVIS_OMA_TOKEN: token, AI: { run } } as never);
+    const response = await handleOmaChatRequest(request({ ...validBody, tools: [wonkTool] }), {
+      JARVIS_OMA_TOKEN: token, AI: { run },
+    } as never);
+    expect(response.status).toBe(200);
+    const data = await response.json() as {
+      content: Array<{ type: string; id?: string; name?: string; input?: Record<string, unknown> }>;
+      stop_reason: string;
+    };
+    expect(data.content).toEqual([{
+      type: "tool_use", id: "call_wonk_1", name: "wonk_search", input: { query: "Agent adapter" },
+    }]);
+    expect(data.stop_reason).toBe("tool_use");
+    const modelInput = run.mock.calls[0][1] as { tools: Array<{ name: string; parameters: unknown }>; parallel_tool_calls: boolean };
+    expect(modelInput.tools).toHaveLength(1);
+    expect(modelInput.tools[0].name).toBe("wonk_search");
+    expect(modelInput.parallel_tool_calls).toBe(false);
+  });
+
+
+  it("normalizes the native Workers AI tool_calls response shape", async () => {
+    const run = vi.fn().mockResolvedValue({
+      tool_calls: [{ name: "wonk_search", arguments: { query: "README" } }],
+    });
+    const response = await handleOmaChatRequest(request({ ...validBody, tools: [wonkTool] }), {
+      JARVIS_OMA_TOKEN: token, AI: { run },
+    } as never);
+    expect(response.status).toBe(200);
+    const data = await response.json() as {
+      content: Array<{ type: string; id?: string; name?: string; input?: Record<string, unknown> }>;
+      stop_reason: string;
+    };
+    expect(data.content).toHaveLength(1);
+    expect(data.content[0]).toMatchObject({
+      type: "tool_use", name: "wonk_search", input: { query: "README" },
+    });
+    expect(data.content[0].id).toMatch(/^call_[a-f0-9-]+$/i);
+    expect(data.stop_reason).toBe("tool_use");
+  });
+
+  it("converts prior tool results back into model tool messages", async () => {
+    const run = vi.fn().mockResolvedValue({ response: "The index found two references." });
+    const body = {
+      messages: [
+        { role: "user", content: "Search the code." },
+        { role: "assistant", content: [{ type: "tool_use", id: "call_1", name: "wonk_search", input: { query: "adapter" } }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "call_1", content: "Found two references." }] },
+      ],
+      tools: [wonkTool],
+    };
+    const response = await handleOmaChatRequest(request(body), { JARVIS_OMA_TOKEN: token, AI: { run } } as never);
+    expect(response.status).toBe(200);
+    const modelInput = run.mock.calls[0][1] as { messages: Array<{ role: string; tool_call_id?: string; content: string | null }> };
+    expect(modelInput.messages[modelInput.messages.length - 1]).toMatchObject({
+      role: "tool", tool_call_id: "call_1", content: "Found two references.",
+    });
+  });
+
+  it("rejects model tool calls that were not in the request allowlist", async () => {
+    const run = vi.fn().mockResolvedValue({
+      choices: [{ message: { tool_calls: [{
+        id: "call_unknown", type: "function",
+        function: { name: "delete_files", arguments: "{}" },
+      }] } }],
+    });
+    const response = await handleOmaChatRequest(request({ ...validBody, tools: [wonkTool] }), {
+      JARVIS_OMA_TOKEN: token, AI: { run },
+    } as never);
+    expect(response.status).toBe(502);
+  });
+
+  it("rejects duplicate IDs in model tool calls", async () => {
+    const run = vi.fn().mockResolvedValue({
+      choices: [{ message: { tool_calls: [
+        { id: "call_duplicate", type: "function", function: { name: "wonk_search", arguments: '{"query":"first"}' } },
+        { id: "call_duplicate", type: "function", function: { name: "wonk_search", arguments: '{"query":"second"}' } },
+      ] } }],
+    });
+    const response = await handleOmaChatRequest(request({ ...validBody, tools: [wonkTool] }), {
+      JARVIS_OMA_TOKEN: token, AI: { run },
+    } as never);
+    expect(response.status).toBe(502);
+  });
+
+  it("rejects tool calls when the request explicitly disables them", async () => {
+    const run = vi.fn().mockResolvedValue({
+      choices: [{ message: { tool_calls: [{
+        id: "call_forbidden", type: "function",
+        function: { name: "wonk_search", arguments: '{"query":"not allowed"}' },
+      }] } }],
+    });
+    const response = await handleOmaChatRequest(request({
+      ...validBody, tools: [wonkTool], tool_choice: "none",
+    }), { JARVIS_OMA_TOKEN: token, AI: { run } } as never);
+    expect(response.status).toBe(502);
+  });
+
+  it("returns estimated usage when provider usage is absent", async () => {
+    const run = vi.fn().mockResolvedValue({ response: "Estimated usage." });
+    const response = await handleOmaChatRequest(request(validBody), { JARVIS_OMA_TOKEN: token, AI: { run } } as never);
     expect(response.status).toBe(200);
     const data = await response.json() as { usage: { input_tokens: number; output_tokens: number } };
     expect(data.usage.input_tokens).toBeGreaterThan(0);
