@@ -78,10 +78,31 @@ export async function handleOmaChatRequest(request: Request, env: Env): Promise<
   const declaredLength = Number(request.headers.get("Content-Length") ?? "0");
   if (Number.isFinite(declaredLength) && declaredLength > MAX_BODY_BYTES) return json({ error: "Request body is too large." }, 413);
 
-  let rawBody: string;
-  try { rawBody = await request.text(); }
-  catch { return json({ error: "Invalid request body." }, 400); }
-  if (new TextEncoder().encode(rawBody).byteLength > MAX_BODY_BYTES) return json({ error: "Request body is too large." }, 413);
+  if (!request.body) return json({ error: "Invalid request body." }, 400);
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let receivedBytes = 0;
+  try {
+    while (true) {
+      const part = await reader.read();
+      if (part.done) break;
+      receivedBytes += part.value.byteLength;
+      if (receivedBytes > MAX_BODY_BYTES) {
+        await reader.cancel();
+        return json({ error: "Request body is too large." }, 413);
+      }
+      chunks.push(part.value);
+    }
+  } catch {
+    return json({ error: "Invalid request body." }, 400);
+  }
+  const bodyBytes = new Uint8Array(receivedBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bodyBytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  const rawBody = new TextDecoder().decode(bodyBytes);
 
   let parsed: unknown;
   try { parsed = JSON.parse(rawBody); }
