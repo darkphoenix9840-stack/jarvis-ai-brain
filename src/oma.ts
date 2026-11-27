@@ -252,6 +252,7 @@ function parseToolCalls(value: unknown, allowedNames: Set<string>): ToolUseBlock
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value) || value.length > MAX_TOOL_CALLS) return null;
   const output: ToolUseBlock[] = [];
+  const seenIds = new Set<string>();
   for (const item of value) {
     if (!isRecord(item)) return null;
     const fn = isRecord(item.function) ? item.function : item;
@@ -269,6 +270,8 @@ function parseToolCalls(value: unknown, allowedNames: Set<string>): ToolUseBlock
     const id = typeof item.id === "string" && /^[a-zA-Z0-9_-]{1,128}$/.test(item.id)
       ? item.id
       : "call_" + crypto.randomUUID();
+    if (seenIds.has(id)) return null;
+    seenIds.add(id);
     output.push({ type: "tool_use", id, name, input });
   }
   return output;
@@ -350,7 +353,7 @@ export async function handleOmaChatRequest(request: Request, env: Env): Promise<
     const value = message?.content;
     const text = (typeof value === "string" ? value : Array.isArray(value) ? value.map(part => part.text ?? "").join("") : result.response ?? "").trim();
     const toolUses = parseToolCalls(message?.tool_calls ?? result.tool_calls, new Set(payload.tools.map(tool => tool.name)));
-    if (!toolUses) {
+    if (!toolUses || (payload.toolChoice === "none" && toolUses.length > 0)) {
       console.error("JARVIS_OMA_INVALID_TOOL_CALL");
       return json({ error: "AI returned an invalid or unsupported tool call." }, 502);
     }
